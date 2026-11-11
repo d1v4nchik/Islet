@@ -14,7 +14,10 @@ hdiutil create -size 40m -fs HFS+ -volname "Islet" -ov "$WORK/rw.dmg" >/dev/null
 mkdir "$WORK/mnt"
 hdiutil attach "$WORK/rw.dmg" -nobrowse -noautoopen -mountpoint "$WORK/mnt" >/dev/null
 
-ditto build/Islet.app "$WORK/mnt/Islet.app"
+# Copy without Finder/iCloud attributes, then make sure the result passes macOS's strict signature check.
+ditto --norsrc --noextattr --noqtn build/Islet.app "$WORK/mnt/Islet.app"
+xattr -cr "$WORK/mnt/Islet.app"
+codesign --verify --strict "$WORK/mnt/Islet.app"
 ln -s /Applications "$WORK/mnt/Applications"
 cp Assets/AppIcon.icns "$WORK/mnt/.VolumeIcon.icns"
 SetFile -a C "$WORK/mnt"
