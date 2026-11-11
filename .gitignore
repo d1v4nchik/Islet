@@ -1,0 +1,7 @@
+build/
+.DS_Store
+*.icns.tmp
+# Credentials never live in the repo: Islet keeps them in ~/Library/Application Support/Islet
+google_client.json
+google_token.json
+notion.json
