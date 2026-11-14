@@ -47,12 +47,18 @@ final class IslandController: NSObject {
     private var host: IslandHostingView<IslandRoot>!
     private let statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
     private var statusHost: PassthroughHostingView<StatusLabel>?
+    /// Off-screen copy of the label, used only to measure the width it's heading to.
+    private let measureHost = NSHostingView(rootView: StatusLabelContent(state: StatusState(kind: .idle)))
+    private var lastStatus: StatusState?
+    private var statusTarget: CGFloat = 0
+    private var widthTimer: Timer?
     private var monitors: [Any] = []
     private var pollTimer: Timer?
     private var wantsHover = false
     private var enteredWhilePinned = false
     private var hoverWork: DispatchWorkItem?
     private var fastTimer: Timer?
+    private var resetWork: DispatchWorkItem?
     private var cancellables = Set<AnyCancellable>()
 
     init(model: CalendarModel) {
@@ -91,11 +97,46 @@ final class IslandController: NSObject {
     }
 
     private func resizeStatusItem() {
-        guard let h = statusHost, let button = statusItem.button else { return }
-        let w = ceil(h.fittingSize.width)
-        if abs(statusItem.length - w) > 0.5 { statusItem.length = w }
-        let frame = NSRect(x: 0, y: 0, width: w, height: button.bounds.height)
-        if h.frame != frame { h.frame = frame }
+        let state = model.statusState
+        guard state != lastStatus else { return }
+        lastStatus = state
+        var steady = state
+        steady.compact = false
+        measureHost.rootView = StatusLabelContent(state: steady)
+        animateStatusWidth(to: ceil(measureHost.fittingSize.width))
+    }
+
+    /// macOS resizes menu bar items instantly; step the width ourselves so it glides (ease-out),
+    /// while the label's text fades and slides in step with it.
+    private func animateStatusWidth(to target: CGFloat) {
+        guard let host = statusHost, let button = statusItem.button, abs(target - statusTarget) > 0.5 else { return }
+        statusTarget = target
+        widthTimer?.invalidate()
+        let from = statusItem.length
+        let height = button.bounds.height
+        guard from > 1, abs(from - target) > 0.5 else {
+            statusItem.length = target
+            host.frame = NSRect(x: 0, y: 0, width: target, height: height)
+            return
+        }
+        // Lay the label out at the wider of the two sizes; the item's edge reveals or hides the rest.
+        host.frame = NSRect(x: 0, y: 0, width: max(from, target), height: height)
+        let start = CACurrentMediaTime()
+        let duration = 0.3
+        let t = Timer(timeInterval: 1.0 / 120.0, repeats: true) { [weak self] timer in
+            MainActor.assumeIsolated {
+                guard let self else { return timer.invalidate() }
+                let p = min(1, (CACurrentMediaTime() - start) / duration)
+                let eased = p * p * (3 - 2 * p)   // ease in-out
+                self.statusItem.length = from + (target - from) * eased
+                if p >= 1 {
+                    timer.invalidate()
+                    self.statusHost?.frame = NSRect(x: 0, y: 0, width: target, height: height)
+                }
+            }
+        }
+        RunLoop.main.add(t, forMode: .common)
+        widthTimer = t
     }
 
     @objc private func statusClicked() {
@@ -113,7 +154,7 @@ final class IslandController: NSObject {
     private func openPinned() {
         hoverWork?.cancel()
         enteredWhilePinned = islandContains(NSEvent.mouseLocation)
-        model.dismissPeek()
+        prepareToOpen()
         withAnimation(Anim.morph) { ui.pinned = true }
     }
 
@@ -123,6 +164,36 @@ final class IslandController: NSObject {
         withAnimation(Anim.morph) {
             ui.pinned = false
             ui.hovering = false
+        }
+        // Once it has finished closing, go back to Today so the next open always starts there.
+        resetWork?.cancel()
+        let work = DispatchWorkItem { [weak self] in
+            MainActor.assumeIsolated {
+                guard let self, !self.ui.hovering, !self.ui.pinned else { return }
+                self.resetWork = nil
+                self.showToday()
+            }
+        }
+        resetWork = work
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.45, execute: work)
+    }
+
+    /// Reopened before the close finished: still start on Today.
+    private func prepareToOpen() {
+        model.dismissPeek()
+        if let work = resetWork {
+            work.cancel()
+            resetWork = nil
+            showToday()
+        }
+    }
+
+    private func showToday() {
+        var t = Transaction()
+        t.disablesAnimations = true
+        withTransaction(t) {
+            ui.tab = .today
+            ui.selectedDay = nil
         }
     }
 
@@ -233,7 +304,7 @@ final class IslandController: NSObject {
             }
             schedule(after: 0.12) { [weak self] in
                 guard let self else { return }
-                self.model.dismissPeek()
+                self.prepareToOpen()
                 withAnimation(Anim.morph) { self.ui.hovering = true }
             }
         } else {
@@ -284,6 +355,9 @@ final class IslandController: NSObject {
         _ = item("Open Google Calendar", #selector(openGoogle), symbol: "arrow.up.right.square")
         if model.auth.isSignedIn {
             _ = item("Refresh", #selector(refresh), symbol: "arrow.clockwise")
+        }
+        if model.connection == .connected {
+            _ = item("Preview Heads-up", #selector(previewHeadsUp), symbol: "bell")
         }
         menu.addItem(.separator())
 
@@ -347,6 +421,10 @@ final class IslandController: NSObject {
 
     @objc private func openGoogle() { GCal.open(day: Date()) }
     @objc private func refresh() { model.refresh(force: true) }
+    @objc private func previewHeadsUp() {
+        close()
+        model.previewHeadsUp()
+    }
     @objc private func signIn() { model.signIn() }
     @objc private func signOut() { model.signOut() }
     @objc private func chooseClient() { model.chooseClientFile() }

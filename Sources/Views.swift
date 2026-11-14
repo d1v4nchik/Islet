@@ -39,7 +39,7 @@ enum Style {
 }
 
 enum Anim {
-    static let morph = Animation.spring(duration: 0.5, bounce: 0.3)
+    static let morph = Animation.spring(duration: 0.42, bounce: 0.08)
     static let tick = Animation.smooth(duration: 0.35)
 }
 
@@ -57,7 +57,6 @@ struct IslandRoot: View {
         let b = ui.bodySize(for: m)
         let radius = Style.radius(m)
         let shape = IslandShape(neckWidth: neckW, neckHeight: neckH, bodyWidth: b.width, bodyHeight: b.height, radius: radius)
-        let glowing = m != .collapsed && (model.isUrgent || (model.peek.map { $0.kind != .hello } ?? false))
 
         ZStack(alignment: .top) {
             PeekView(model: model)
@@ -74,28 +73,10 @@ struct IslandRoot: View {
         .frame(width: max(b.width, neckW) + 24, height: neckH + b.height, alignment: .top)
         .background(shape.fill(Color.black))
         .clipShape(shape)
-        .background(
-            IslandShape(neckWidth: 0, neckHeight: neckH, bodyWidth: b.width, bodyHeight: b.height, radius: radius)
-                .fill(model.accentColor)
-                .blur(radius: 16)
-                .modifier(Breathe(active: glowing))
-        )
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
         .ignoresSafeArea()
         .animation(Anim.morph, value: m)
         .animation(Anim.morph, value: b)
-        .animation(.easeInOut(duration: 0.4), value: glowing)
-    }
-}
-
-private struct Breathe: ViewModifier {
-    var active: Bool
-    func body(content: Content) -> some View {
-        if active {
-            PhaseAnimator([0.2, 0.7]) { o in content.opacity(o) } animation: { _ in .easeInOut(duration: 1.2) }
-        } else {
-            content.opacity(0)
-        }
     }
 }
 
@@ -766,47 +747,86 @@ struct InlineNote: View {
 
 // MARK: - Menu bar label (Notion-style, always visible)
 
+/// Everything the menu bar label shows, as plain values, so its final width can be measured up front
+/// and the menu bar item can glide to it instead of snapping.
+struct StatusState: Equatable {
+    enum Kind: Equatable { case event, idle, signingIn, connect, problem }
+    var kind: Kind
+    var eventID = ""
+    var title = ""
+    var detail = ""
+    var color: Color = .white
+    var remaining: Double = 1
+    var pulsing = false
+    /// A heads-up is out of the notch: the text lives there, only the pill stays here.
+    var compact = false
+}
+
+extension CalendarModel {
+    var statusState: StatusState {
+        let compact = peek != nil
+        switch connection {
+        case .connected:
+            guard let f = featured else { return StatusState(kind: .idle) }
+            return StatusState(kind: .event, eventID: f.event.id, title: f.event.title, detail: shortLabel(f),
+                               color: f.event.color, remaining: f.isOngoing ? 1 - progress(f) : 1,
+                               pulsing: isUrgent || compact, compact: compact)
+        case .signingIn: return StatusState(kind: .signingIn, compact: compact)
+        case .noClient, .signedOut: return StatusState(kind: .connect, compact: compact)
+        case .apiDisabled, .error: return StatusState(kind: .problem)
+        }
+    }
+}
+
+/// The live label inside the menu bar item.
 struct StatusLabel: View {
     @ObservedObject var model: CalendarModel
 
     var body: some View {
-        // While a heads-up is dropping out of the notch, the text lives there instead: only the pill stays here.
-        let handedOff = model.peek != nil
+        StatusLabelContent(state: model.statusState)
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .leading)
+    }
+}
+
+/// Keeps the same width whether or not a heads-up is showing, so the menu bar never shifts;
+/// during a heads-up the text simply fades out and back in.
+struct StatusLabelContent: View {
+    let state: StatusState
+
+    var body: some View {
+        let textOpacity: Double = state.compact ? 0 : 1
         HStack(spacing: 6) {
-            switch model.connection {
-            case .connected:
-                if let f = model.featured {
-                    EventBar(remaining: f.isOngoing ? 1 - model.progress(f) : 1,
-                             color: f.event.color, pulsing: model.isUrgent || handedOff)
-                        .frame(width: 4, height: 14)
-                    if !handedOff {
-                        HStack(spacing: 5) {
-                            CappedWidth(max: 140) {
-                                Text(f.event.title).lineLimit(1).truncationMode(.tail)
-                            }
-                            Text(model.shortLabel(f))
-                                .monospacedDigit()
-                                .opacity(0.5)
-                                .contentTransition(.numericText(countsDown: true))
-                        }
-                        .transition(.opacity.combined(with: .blurReplace))
+            switch state.kind {
+            case .event:
+                EventBar(remaining: state.remaining, color: state.color, pulsing: false)
+                    .frame(width: 4, height: 14)
+                HStack(spacing: 5) {
+                    CappedWidth(max: 140) {
+                        Text(state.title).lineLimit(1).truncationMode(.tail)
                     }
-                } else {
-                    Image(systemName: "calendar")
+                    Text(state.detail)
+                        .monospacedDigit()
+                        .opacity(0.5)
+                        .contentTransition(.numericText(countsDown: true))
                 }
+                .opacity(textOpacity)
+            case .idle:
+                Image(systemName: "calendar")
             case .signingIn:
                 Image(systemName: "person.badge.key")
-                Text("Signing in…")
-            case .noClient, .signedOut:
+                Text("Signing in…").opacity(textOpacity)
+            case .connect:
                 Image(systemName: "calendar.badge.plus")
-                if !handedOff { Text("Connect") }
-            case .apiDisabled, .error:
+                Text("Connect").opacity(textOpacity)
+            case .problem:
                 Image(systemName: "calendar.badge.exclamationmark")
             }
         }
         .font(Font(NSFont.menuBarFont(ofSize: 0)))
         .padding(.horizontal, 5)
         .fixedSize()
+        .animation(.easeInOut(duration: 0.25), value: state.compact)
+        .animation(.easeInOut(duration: 0.3), value: state.title)
     }
 }
 
@@ -828,11 +848,7 @@ struct EventBar: View {
 private struct Pulse: ViewModifier {
     var active: Bool
     func body(content: Content) -> some View {
-        if active {
-            PhaseAnimator([1.0, 0.35]) { o in content.opacity(o) } animation: { _ in .easeInOut(duration: 0.7) }
-        } else {
-            content
-        }
+        content   // pulsing turned off: calm, nothing blinks
     }
 }
 
@@ -1136,8 +1152,7 @@ struct CappedWidth: Layout {
 extension View {
     func shown(_ visible: Bool) -> some View {
         self.opacity(visible ? 1 : 0)
-            .blur(radius: visible ? 0 : 10)
-            .scaleEffect(visible ? 1 : 0.94, anchor: .top)
+            .scaleEffect(visible ? 1 : 0.97, anchor: .top)
             .allowsHitTesting(visible)
             .accessibilityHidden(!visible)
     }

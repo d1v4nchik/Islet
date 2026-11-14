@@ -134,7 +134,7 @@ private struct SnapshotScene: View {
                 Text("Go")
                 Text("Window")
                 Spacer()
-                StatusLabel(model: model)
+                StatusLabelContent(state: model.statusState)
                 Image(systemName: "wifi")
                 Image(systemName: "battery.75percent")
                 Text(clock)

@@ -582,6 +582,15 @@ final class CalendarModel: ObservableObject {
         schedulePeekEnd(after: 1.2)
     }
 
+    /// Shows the heads-up for the next event (or today's summary) so you can see how it looks.
+    func previewHeadsUp() {
+        if let n = next {
+            showPeek(Peek(kind: .soon, eventID: n.id), for: 6)
+        } else {
+            showPeek(Peek(kind: .hello, eventID: nil), for: 5)
+        }
+    }
+
     func dismissPeek() {
         peekClear?.cancel()
         peekHeld = false

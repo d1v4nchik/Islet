@@ -8,6 +8,7 @@
   <img src="https://img.shields.io/badge/macOS-14%2B-black" alt="macOS 14+">
   <img src="https://img.shields.io/badge/Apple%20Silicon%20%7C%20Intel-supported-black" alt="Apple Silicon and Intel">
   <img src="https://img.shields.io/github/v/release/d1v4nchik/Islet" alt="Latest release">
+  <img src="https://img.shields.io/badge/license-GPL--3.0-blue" alt="License: GPL-3.0">
 </p>
 
 Islet puts your Google Calendar in the Mac's notch. Your next event sits quietly in the menu bar. Hover over the notch
@@ -61,6 +62,7 @@ macOS 14 or newer, Apple Silicon or Intel.
 | Open an event in Google Calendar | Click it |
 | Join a call | **Join** on the event or the heads-up |
 | Tick off a task | Click it (click again to undo) |
+| See what a heads-up looks like | Right-click › **Preview Heads-up** |
 | Calendars, accounts, Launch at Login, Quit | Right-click the notch or the menu bar item |
 
 ## Installing
@@ -112,3 +114,13 @@ Only the Xcode Command Line Tools are needed.
 ./build.sh        # build/Islet.app for this Mac
 ./release.sh      # universal build/Islet.dmg
 ```
+
+## Contributing
+
+Bug reports, ideas and pull requests are welcome. See [CONTRIBUTING.md](CONTRIBUTING.md), and please follow the
+[Code of Conduct](CODE_OF_CONDUCT.md). Questions go in [Discussions](https://github.com/d1v4nchik/Islet/discussions);
+security issues go through [SECURITY.md](SECURITY.md).
+
+## License
+
+Islet is free software under the [GNU General Public License v3.0](LICENSE).
